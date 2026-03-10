@@ -6,14 +6,55 @@ Provides a cached Supabase client for all pages.
 import os
 import streamlit as st
 
-SUPABASE_URL = os.environ.get(
-    "SUPABASE_URL",
-    "https://xoqhxpqsfxpdiwyuvhdd.supabase.co"
-)
-SUPABASE_KEY = os.environ.get(
-    "SUPABASE_KEY",
-    st.secrets.get("SUPABASE_KEY", "") if hasattr(st, "secrets") else ""
-)
+# Default Supabase URL (public, safe to hardcode)
+_DEFAULT_URL = "https://xoqhxpqsfxpdiwyuvhdd.supabase.co"
+
+
+def _get_secret(key: str, default: str = "") -> str:
+    """
+    Retrieve a secret from multiple sources in priority order:
+    1. Environment variable (e.g., SUPABASE_KEY)
+    2. Streamlit secrets flat format (e.g., secrets["SUPABASE_KEY"])
+    3. Streamlit secrets nested format (e.g., secrets["supabase"]["key"])
+    """
+    # 1. Environment variable
+    val = os.environ.get(key, "")
+    if val:
+        return val
+
+    # 2. Streamlit secrets (flat format)
+    try:
+        val = st.secrets.get(key, "")
+        if val:
+            return str(val)
+    except Exception:
+        pass
+
+    # 3. Streamlit secrets (nested under [supabase] section)
+    try:
+        supabase_section = st.secrets.get("supabase", {})
+        if isinstance(supabase_section, dict):
+            # Map SUPABASE_KEY -> key, SUPABASE_URL -> url
+            short_key = key.replace("SUPABASE_", "").lower()
+            val = supabase_section.get(short_key, "")
+            if val:
+                return str(val)
+    except Exception:
+        pass
+
+    # 4. Try accessing as attribute (Streamlit AttrDict)
+    try:
+        val = getattr(st.secrets, key, "")
+        if val:
+            return str(val)
+    except Exception:
+        pass
+
+    return default
+
+
+SUPABASE_URL = _get_secret("SUPABASE_URL", _DEFAULT_URL)
+SUPABASE_KEY = _get_secret("SUPABASE_KEY", "")
 
 
 @st.cache_resource(show_spinner=False)
@@ -21,7 +62,14 @@ def get_supabase():
     """Return a cached Supabase client."""
     from supabase import create_client
     if not SUPABASE_KEY:
-        st.error("SUPABASE_KEY not configured. Set it in Streamlit secrets or environment.")
+        st.error(
+            "SUPABASE_KEY not configured. "
+            "Set it in Streamlit Cloud > App Settings > Secrets using this format:\n\n"
+            "```toml\n"
+            'SUPABASE_URL = "https://xoqhxpqsfxpdiwyuvhdd.supabase.co"\n'
+            'SUPABASE_KEY = "your-anon-key-here"\n'
+            "```"
+        )
         st.stop()
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
