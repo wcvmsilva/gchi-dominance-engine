@@ -1,10 +1,12 @@
 """
 GCHI Dominance Engine — Streamlit Interface
-GC Home Improvement LLC | v8.4
+GC Home Improvement LLC | v8.4.1
 Author: Manus AI
 
 Main application file. Provides a professional, intuitive interface for
 validating and preparing JobTread-ready CSV proposals.
+
+v8.4.1 — Updated to match JobTread's actual CSV column format.
 """
 
 import io
@@ -197,6 +199,17 @@ st.markdown("""
         margin: 0.15rem;
     }
 
+    /* ── Mapping Info ── */
+    .mapping-info {
+        background: rgba(184, 134, 11, 0.08);
+        border: 1px solid rgba(184, 134, 11, 0.3);
+        border-radius: 8px;
+        padding: 0.8rem 1rem;
+        margin: 0.5rem 0;
+        font-size: 0.85rem;
+        color: var(--gold-light);
+    }
+
     /* ── Expander ── */
     .streamlit-expanderHeader {
         background: var(--card-bg) !important;
@@ -257,7 +270,7 @@ def render_sidebar(validator: GCHIValidator) -> None:
         st.markdown("---")
 
         # System Status
-        st.markdown('<div class="section-header">System Status v8.4</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">System Status v8.4.1</div>', unsafe_allow_html=True)
         counts = validator.reference_counts
         col1, col2 = st.columns(2)
         with col1:
@@ -278,9 +291,13 @@ def render_sidebar(validator: GCHIValidator) -> None:
             for u in sorted(validator.valid_units):
                 st.markdown(f'<span class="ref-tag">{u}</span>', unsafe_allow_html=True)
 
+        with st.expander("🏗️ Cost Groups (Parents)"):
+            for cg in sorted(validator.valid_cost_groups):
+                st.markdown(f'<span class="ref-tag">{cg}</span>', unsafe_allow_html=True)
+
         st.markdown("---")
         st.markdown(
-            '<p style="font-size:0.7rem; color:#555; text-align:center;">GCHI Dominance Engine v8.4<br>© 2026 GC Home Improvement LLC</p>',
+            '<p style="font-size:0.7rem; color:#555; text-align:center;">GCHI Dominance Engine v8.4.1<br>© 2026 GC Home Improvement LLC</p>',
             unsafe_allow_html=True
         )
 
@@ -397,7 +414,7 @@ def main():
     <div class="gchi-header">
         <div>
             <h1>🏗️ GCHI Dominance Engine</h1>
-            <p>JobTread CSV Validator & Compliance Engine — v8.4 | GC Home Improvement LLC</p>
+            <p>JobTread CSV Validator & Compliance Engine — v8.4.1 | GC Home Improvement LLC</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -409,15 +426,19 @@ def main():
 
         | Column | Description |
         |---|---|
-        | `Cost Group Name` | Must match one of the 199 official GCHI Cost Codes |
-        | `Cost Item Name` | Descriptive name for the line item |
+        | `Cost Group` | Must match one of the 27 GCHI Parent Cost Codes (e.g., Framing & Structural, Roofing) |
+        | `Cost Item` | Must match one of the 172 GCHI Child Cost Codes (e.g., Supervision, Waste Management) |
         | `Description` | Detailed description of the work or material |
         | `Quantity` | Numeric quantity |
-        | `Unit` | Must be one of the 19 valid units (e.g., Hours, Square Feet, Bags) |
+        | `Unit` | Must be one of the 19 valid units (e.g., Hours, Square Feet, Each, Bags) |
         | `Unit Cost` | Your direct cost per unit |
-        | `Unit Price` | The price charged to the client per unit |
         | `Cost Type` | Must be one of the 7 valid types (Labor, Materials, Subcontractor, Equipment / Rental, Permits / Fees, Allowance, Other) |
         | `Taxable` | `true` or `false` |
+
+        **Optional column:** `Unit Price` (the price charged to the client per unit).
+
+        **Column name flexibility:** The engine also accepts `Cost Group Name` and `Cost Item Name`
+        (used by the GCHI Custom GPT) — they are automatically mapped to the JobTread format.
 
         **Step 2 — Upload your CSV** using the uploader below.
 
@@ -437,26 +458,23 @@ def main():
     )
 
     # ── Sample Download ───────────────────────────────────────────────────────
-    sample_path = os.path.join(
-        os.path.dirname(__file__), "..", "skills",
-        "gchi-dominance-system", "templates", "jobtread_template.csv"
-    )
+    sample_path = os.path.join(os.path.dirname(__file__), "data", "GCHI_JobTread_Template_v8.4.1.csv")
     if os.path.exists(sample_path):
         with open(sample_path, "rb") as f:
             sample_bytes = f.read()
         st.download_button(
             label="⬇️ Download Sample Template CSV",
             data=sample_bytes,
-            file_name="GCHI_JobTread_Template_v8.4.csv",
+            file_name="GCHI_JobTread_Template_v8.4.1.csv",
             mime="text/csv",
-            help="Download the official GCHI v8.4 template with sample data to use as a starting point.",
+            help="Download the official GCHI v8.4.1 template with sample data to use as a starting point.",
         )
 
     # ── Validation Flow ───────────────────────────────────────────────────────
     if uploaded_file is not None:
         st.markdown("---")
 
-        # Parse the uploaded CSV — using preprocess_csv for robust format handling
+        # Parse the uploaded CSV
         try:
             raw_bytes = uploaded_file.read()
             df = GCHIValidator.preprocess_csv(raw_bytes)
@@ -470,8 +488,16 @@ def main():
             st.stop()
 
         # Run validation
-        with st.spinner("🔍 Running GCHI v8.4 compliance validation..."):
+        with st.spinner("🔍 Running GCHI v8.4.1 compliance validation..."):
             result = validator.validate(df)
+
+        # Show column mapping info if any mappings were applied
+        if result.summary.get("column_mappings"):
+            mappings_text = " | ".join(result.summary["column_mappings"])
+            st.markdown(
+                f'<div class="mapping-info">🔄 <b>Column auto-mapping applied:</b> {mappings_text}</div>',
+                unsafe_allow_html=True
+            )
 
         # ── Metrics Row ───────────────────────────────────────────────────────
         st.markdown('<div class="section-header">📊 Validation Summary</div>', unsafe_allow_html=True)
@@ -510,10 +536,17 @@ def main():
 
         # ── Status Banner ─────────────────────────────────────────────────────
         if result.is_valid:
-            st.markdown("""
-            <div class="status-banner pass">
-                ✅ VALIDATION PASSED — This CSV is fully compliant with GCHI v8.4 rules and ready for JobTread import.
-            </div>""", unsafe_allow_html=True)
+            if result.warning_count > 0:
+                st.markdown(f"""
+                <div class="status-banner pass">
+                    ✅ VALIDATION PASSED — This CSV is compliant with GCHI v8.4.1 rules and ready for JobTread import.
+                    ({result.warning_count} warning(s) found — review recommended.)
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class="status-banner pass">
+                    ✅ VALIDATION PASSED — This CSV is fully compliant with GCHI v8.4.1 rules and ready for JobTread import.
+                </div>""", unsafe_allow_html=True)
         else:
             st.markdown(f"""
             <div class="status-banner fail">
@@ -589,7 +622,7 @@ def main():
             <div style="background: rgba(40, 167, 69, 0.1); border: 1px solid #28A745;
                         border-radius: 10px; padding: 1rem; margin-bottom: 1rem;">
                 <p style="color: #28A745; font-weight: 600; margin: 0;">
-                    ✅ Your CSV passed all GCHI v8.4 compliance checks.
+                    ✅ Your CSV passed all GCHI v8.4.1 compliance checks.
                     Click below to download the JobTread-ready file.
                 </p>
             </div>""", unsafe_allow_html=True)
@@ -632,8 +665,8 @@ def main():
             <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
             <h3 style="color: #888;">No file uploaded yet</h3>
             <p style="color: #555; max-width: 500px; margin: 0 auto;">
-                Upload a CSV file above to validate it against the GCHI v8.4 rules.
-                Download the sample template to get started quickly.
+                Upload a CSV file above to validate it against the GCHI v8.4.1 rules.
+                The engine accepts both JobTread native format and GCHI Custom GPT format.
             </p>
         </div>
         """, unsafe_allow_html=True)

@@ -1,11 +1,15 @@
 """
 GCHI Dominance Engine — Validator Module
-GC Home Improvement LLC | v8.4
+GC Home Improvement LLC | v8.4.1
 Author: Manus AI
 
 This module contains the GCHIValidator class, which is the core logic engine
 for validating JobTread CSV proposals against the official GCHI v8.4 rules.
 It reads three source-of-truth files and performs comprehensive validation.
+
+v8.4.1 — Column-name auto-mapping to support both:
+  - JobTread native export format  (Cost Group, Cost Item, ...)
+  - GCHI internal format           (Cost Group Name, Cost Item Name, ...)
 """
 
 import io
@@ -49,19 +53,39 @@ class ValidationResult:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Required CSV Columns
+# Column Mapping — JobTread <-> GCHI Internal
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Map of alternative names -> canonical name (case-insensitive matching)
+COLUMN_ALIASES = {
+    # GCHI internal / ChatGPT format uses these longer names:
+    "cost group name":  "Cost Group",
+    "cost item name":   "Cost Item",
+    # Underscore variants:
+    "cost_group":       "Cost Group",
+    "cost_item":        "Cost Item",
+    "cost_group_name":  "Cost Group",
+    "cost_item_name":   "Cost Item",
+    "unit_cost":        "Unit Cost",
+    "unit_price":       "Unit Price",
+    "cost_type":        "Cost Type",
+}
+
+# Required columns (must be present after normalization)
 REQUIRED_COLUMNS = [
-    "Cost Group Name",
-    "Cost Item Name",
+    "Cost Group",
+    "Cost Item",
     "Description",
     "Quantity",
     "Unit",
     "Unit Cost",
-    "Unit Price",
     "Cost Type",
     "Taxable",
+]
+
+# Optional columns (validated if present, but not required)
+OPTIONAL_COLUMNS = [
+    "Unit Price",
 ]
 
 # Taxable rules per Cost Type (source of truth: jobtread_rules.md v8.4)
@@ -100,12 +124,16 @@ class GCHIValidator:
             ValueError: If any data file cannot be parsed correctly.
         """
         self.data_dir = data_dir
-        self._valid_cost_codes: set[str] = set()
+        self._valid_cost_groups: set[str] = set()    # Parent cost codes
+        self._valid_cost_items: set[str] = set()      # Child cost codes
+        self._valid_cost_codes: set[str] = set()      # All cost codes (parent + child)
         self._valid_cost_types: set[str] = set()
         self._valid_units: set[str] = set()
         self._cost_codes_df: Optional[pd.DataFrame] = None
         self._cost_types_df: Optional[pd.DataFrame] = None
         self._units_df: Optional[pd.DataFrame] = None
+        self._parent_child_map: dict[str, list[str]] = {}  # parent -> [children]
+        self._child_parent_map: dict[str, str] = {}         # child -> parent
         self._load_reference_data()
 
     def _load_reference_data(self) -> None:
@@ -119,10 +147,27 @@ class GCHIValidator:
             )
         try:
             self._cost_codes_df = pd.read_csv(cost_codes_path, dtype=str)
-            # The "Name" column contains both parent and child cost code names
-            self._valid_cost_codes = set(
-                self._cost_codes_df["Name"].dropna().str.strip().tolist()
-            )
+            all_names = self._cost_codes_df["Name"].dropna().str.strip().tolist()
+            self._valid_cost_codes = set(all_names)
+
+            # Separate parents and children, build relationship maps
+            for _, row in self._cost_codes_df.iterrows():
+                name = str(row.get("Name", "")).strip()
+                parent_name = str(row.get("Parent Name", "")).strip()
+                if not name:
+                    continue
+                if not parent_name or parent_name == "nan":
+                    # This is a parent cost code (Cost Group)
+                    self._valid_cost_groups.add(name)
+                    if name not in self._parent_child_map:
+                        self._parent_child_map[name] = []
+                else:
+                    # This is a child cost code (Cost Item)
+                    self._valid_cost_items.add(name)
+                    self._child_parent_map[name] = parent_name
+                    if parent_name not in self._parent_child_map:
+                        self._parent_child_map[parent_name] = []
+                    self._parent_child_map[parent_name].append(name)
         except Exception as e:
             raise ValueError(f"Failed to parse Cost Codes file: {e}")
 
@@ -135,15 +180,12 @@ class GCHIValidator:
             )
         try:
             self._cost_types_df = pd.read_csv(cost_types_path, dtype=str)
-            # Strip BOM and whitespace from column names
             self._cost_types_df.columns = (
                 self._cost_types_df.columns.str.strip().str.lstrip("\ufeff").str.strip('"')
             )
             self._valid_cost_types = set(
                 self._cost_types_df["Name"].dropna().str.strip().tolist()
             )
-            # Add the 3 new cost types that were added in the session (not yet in the
-            # original JobTread export file, but are valid per jobtread_rules.md v8.4)
             self._valid_cost_types.update(
                 {"Equipment / Rental", "Permits / Fees", "Allowance"}
             )
@@ -165,7 +207,6 @@ class GCHIValidator:
             self._valid_units = set(
                 self._units_df["Name"].dropna().str.strip().tolist()
             )
-            # Add the 8 new units added in the session (not yet in the original export)
             self._valid_units.update(
                 {"Bags", "Board Feet", "Boxes", "Bundles", "Pieces", "Rolls", "Sets", "Sheets"}
             )
@@ -179,6 +220,14 @@ class GCHIValidator:
         return self._valid_cost_codes
 
     @property
+    def valid_cost_groups(self) -> set[str]:
+        return self._valid_cost_groups
+
+    @property
+    def valid_cost_items(self) -> set[str]:
+        return self._valid_cost_items
+
+    @property
     def valid_cost_types(self) -> set[str]:
         return self._valid_cost_types
 
@@ -190,11 +239,53 @@ class GCHIValidator:
     def reference_counts(self) -> dict:
         return {
             "cost_codes": len(self._valid_cost_codes),
+            "cost_groups": len(self._valid_cost_groups),
+            "cost_items": len(self._valid_cost_items),
             "cost_types": len(self._valid_cost_types),
             "units": len(self._valid_units),
         }
 
-    # ── Core Validation Method ────────────────────────────────────────────────
+    # ── Column Normalization ─────────────────────────────────────────────────
+
+    @staticmethod
+    def normalize_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+        """
+        Normalize column names to canonical GCHI format.
+
+        Handles multiple naming conventions:
+        - JobTread native: 'Cost Group', 'Cost Item'
+        - GCHI internal:   'Cost Group Name', 'Cost Item Name'
+        - Underscore:      'cost_group', 'cost_item'
+
+        Returns:
+            Tuple of (normalized DataFrame, list of column mappings applied).
+        """
+        mappings_applied = []
+        new_columns = {}
+
+        for col in df.columns:
+            col_stripped = col.strip()
+            col_lower = col_stripped.lower()
+
+            # Check if it's already a canonical name
+            canonical_names_lower = {c.lower(): c for c in REQUIRED_COLUMNS + OPTIONAL_COLUMNS}
+            if col_lower in canonical_names_lower:
+                canonical = canonical_names_lower[col_lower]
+                if col_stripped != canonical:
+                    new_columns[col] = canonical
+                    mappings_applied.append(f"'{col_stripped}' -> '{canonical}'")
+            elif col_lower in COLUMN_ALIASES:
+                target = COLUMN_ALIASES[col_lower]
+                new_columns[col] = target
+                mappings_applied.append(f"'{col_stripped}' -> '{target}'")
+            # else: keep the column as-is (extra columns are allowed)
+
+        if new_columns:
+            df = df.rename(columns=new_columns)
+
+        return df, mappings_applied
+
+    # ── CSV Preprocessing ────────────────────────────────────────────────────
 
     @staticmethod
     def preprocess_csv(raw_bytes: bytes) -> pd.DataFrame:
@@ -213,7 +304,6 @@ class GCHIValidator:
         Raises:
             ValueError: If the file cannot be parsed as a valid CSV.
         """
-        # Decode with BOM handling
         try:
             text = raw_bytes.decode('utf-8-sig').strip()
         except UnicodeDecodeError:
@@ -224,26 +314,27 @@ class GCHIValidator:
             raise ValueError("The uploaded file is empty.")
 
         # Detect wrapped-quote format: each line is "col1,col2,..."
-        # This happens when ChatGPT or some editors wrap entire rows in quotes
         sample = lines[0].strip()
         if sample.startswith('"') and sample.endswith('"') and ',' in sample[1:-1]:
-            # Strip outer quotes from every line
-            lines = [
-                line.strip()[1:-1] if (line.strip().startswith('"') and line.strip().endswith('"'))
-                else line.strip()
-                for line in lines
-            ]
-            text = '\n'.join(lines)
+            inner = sample[1:-1]
+            if not inner.startswith('"'):
+                lines = [
+                    line.strip()[1:-1] if (line.strip().startswith('"') and line.strip().endswith('"'))
+                    else line.strip()
+                    for line in lines
+                ]
+                text = '\n'.join(lines)
 
         try:
             df = pd.read_csv(io.StringIO(text), dtype=str)
-            # Strip whitespace from all string values
+            df.columns = df.columns.str.strip()
             df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
-            # Drop fully empty rows
             df = df.dropna(how='all').reset_index(drop=True)
             return df
         except Exception as e:
             raise ValueError(f"Could not parse CSV file: {e}")
+
+    # ── Core Validation Method ────────────────────────────────────────────────
 
     def validate(self, df: pd.DataFrame) -> ValidationResult:
         """
@@ -258,10 +349,13 @@ class GCHIValidator:
         errors: list[ValidationError] = []
         warnings: list[ValidationError] = []
 
+        # ── Step 0: Normalize column names ───────────────────────────────────
+        df, mappings = self.normalize_columns(df)
+
         # ── Step 1: Check required columns ───────────────────────────────────
         missing_cols = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing_cols:
-            # Return early — we can't validate without the required columns
+            found_cols = list(df.columns)
             return ValidationResult(
                 is_valid=False,
                 total_rows=len(df),
@@ -272,50 +366,112 @@ class GCHIValidator:
                         value="",
                         message=(
                             f"Missing required column(s): {', '.join(missing_cols)}. "
-                            f"Expected columns: {', '.join(REQUIRED_COLUMNS)}"
+                            f"Found columns: {', '.join(found_cols)}. "
+                            f"Expected columns: {', '.join(REQUIRED_COLUMNS)}. "
+                            f"The engine accepts both JobTread format (Cost Group, Cost Item) "
+                            f"and GCHI format (Cost Group Name, Cost Item Name)."
                         ),
                         severity="error",
                     )
                 ],
-                summary={"missing_columns": missing_cols},
+                summary={
+                    "missing_columns": missing_cols,
+                    "found_columns": found_cols,
+                    "column_mappings": mappings,
+                },
             )
+
+        # Track optional columns presence
+        has_unit_price = "Unit Price" in df.columns
 
         # ── Step 2: Row-by-row validation ─────────────────────────────────────
         for idx, row in df.iterrows():
             row_num = idx + 2  # +2 because idx is 0-based and row 1 is the header
 
-            # ── 2a. Cost Group Name ───────────────────────────────────────────
-            cost_group = str(row.get("Cost Group Name", "")).strip()
+            # ── 2a. Cost Group (Parent Cost Code) ────────────────────────────
+            cost_group = str(row.get("Cost Group", "")).strip()
             if not cost_group:
                 errors.append(ValidationError(
                     row=row_num,
-                    column="Cost Group Name",
+                    column="Cost Group",
                     value="(empty)",
-                    message="Cost Group Name cannot be empty.",
+                    message="Cost Group cannot be empty.",
                 ))
             elif cost_group not in self._valid_cost_codes:
-                # Try case-insensitive match to give a helpful suggestion
                 lower_map = {c.lower(): c for c in self._valid_cost_codes}
                 suggestion = lower_map.get(cost_group.lower())
                 hint = f" Did you mean '{suggestion}'?" if suggestion else ""
 
-                # Detect numeric code pattern (e.g. '01-001', '0101', '99-999')
                 is_numeric_code = bool(re.match(r'^\d{2,4}[-]?\d{0,4}$', cost_group))
                 if is_numeric_code:
                     hint = (
-                        " Note: The 'Cost Group Name' field requires the descriptive NAME "
-                        "(e.g. 'Building Permits'), not the numeric code (e.g. '0101'). "
+                        " Note: The 'Cost Group' field requires the descriptive NAME "
+                        "(e.g. 'General Conditions'), not the numeric code (e.g. '0100'). "
                         "Use the GCHI v8.4 Cost Code library to find the correct name."
                     )
 
+                if not hint:
+                    close_matches = [
+                        cc for cc in self._valid_cost_groups
+                        if cost_group.lower() in cc.lower() or cc.lower() in cost_group.lower()
+                    ]
+                    if close_matches:
+                        hint = f" Similar Cost Groups found: {', '.join(close_matches[:3])}"
+
                 errors.append(ValidationError(
                     row=row_num,
-                    column="Cost Group Name",
+                    column="Cost Group",
                     value=cost_group,
                     message=f"'{cost_group}' is not a valid Cost Code in the GCHI v8.4 library.{hint}",
                 ))
 
-            # ── 2b. Cost Type ─────────────────────────────────────────────────
+            # ── 2b. Cost Item ────────────────────────────────────────────────
+            cost_item = str(row.get("Cost Item", "")).strip()
+            if not cost_item:
+                errors.append(ValidationError(
+                    row=row_num,
+                    column="Cost Item",
+                    value="(empty)",
+                    message="Cost Item cannot be empty.",
+                ))
+            elif cost_item not in self._valid_cost_codes:
+                lower_map = {c.lower(): c for c in self._valid_cost_codes}
+                suggestion = lower_map.get(cost_item.lower())
+                hint = f" Did you mean '{suggestion}'?" if suggestion else ""
+
+                if not hint:
+                    close_matches = [
+                        cc for cc in self._valid_cost_items
+                        if cost_item.lower() in cc.lower() or cc.lower() in cost_item.lower()
+                    ]
+                    if close_matches:
+                        hint = f" Similar Cost Items found: {', '.join(close_matches[:3])}"
+
+                errors.append(ValidationError(
+                    row=row_num,
+                    column="Cost Item",
+                    value=cost_item,
+                    message=f"'{cost_item}' is not a valid Cost Code in the GCHI v8.4 library.{hint}",
+                ))
+
+            # ── 2c. Cost Group <-> Cost Item relationship check (warning) ────
+            if (cost_group in self._valid_cost_groups and
+                    cost_item in self._valid_cost_items):
+                expected_parent = self._child_parent_map.get(cost_item)
+                if expected_parent and expected_parent != cost_group:
+                    warnings.append(ValidationError(
+                        row=row_num,
+                        column="Cost Group / Cost Item",
+                        value=f"{cost_group} / {cost_item}",
+                        message=(
+                            f"Cost Item '{cost_item}' belongs to Cost Group "
+                            f"'{expected_parent}', but was placed under '{cost_group}'. "
+                            f"Verify the correct parent-child relationship."
+                        ),
+                        severity="warning",
+                    ))
+
+            # ── 2d. Cost Type ────────────────────────────────────────────────
             cost_type = str(row.get("Cost Type", "")).strip()
             if not cost_type:
                 errors.append(ValidationError(
@@ -335,7 +491,7 @@ class GCHIValidator:
                     ),
                 ))
 
-            # ── 2c. Unit ──────────────────────────────────────────────────────
+            # ── 2e. Unit ─────────────────────────────────────────────────────
             unit = str(row.get("Unit", "")).strip()
             if not unit:
                 errors.append(ValidationError(
@@ -345,17 +501,20 @@ class GCHIValidator:
                     message="Unit cannot be empty.",
                 ))
             elif unit not in self._valid_units:
+                lower_map = {u.lower(): u for u in self._valid_units}
+                suggestion = lower_map.get(unit.lower())
+                hint = f" Did you mean '{suggestion}'?" if suggestion else ""
                 errors.append(ValidationError(
                     row=row_num,
                     column="Unit",
                     value=unit,
                     message=(
                         f"'{unit}' is not a valid Unit. "
-                        f"Allowed values: {', '.join(sorted(self._valid_units))}"
+                        f"Allowed values: {', '.join(sorted(self._valid_units))}.{hint}"
                     ),
                 ))
 
-            # ── 2d. Taxable consistency check (warning) ───────────────────────
+            # ── 2f. Taxable consistency check (warning) ──────────────────────
             taxable_raw = str(row.get("Taxable", "")).strip().lower()
             taxable_bool = taxable_raw in ("true", "1", "yes")
             if cost_type in TAXABLE_RULES:
@@ -374,8 +533,12 @@ class GCHIValidator:
                         severity="warning",
                     ))
 
-            # ── 2e. Numeric field validation ──────────────────────────────────
-            for num_col in ("Quantity", "Unit Cost", "Unit Price"):
+            # ── 2g. Numeric field validation ─────────────────────────────────
+            numeric_cols = ["Quantity", "Unit Cost"]
+            if has_unit_price:
+                numeric_cols.append("Unit Price")
+
+            for num_col in numeric_cols:
                 val = str(row.get(num_col, "")).strip()
                 if val:
                     try:
@@ -396,14 +559,15 @@ class GCHIValidator:
                             message=f"'{num_col}' must be a number, got: '{val}'",
                         ))
 
-            # ── 2f. Cost Item Name must not be empty ──────────────────────────
-            item_name = str(row.get("Cost Item Name", "")).strip()
-            if not item_name:
-                errors.append(ValidationError(
+            # ── 2h. Description should not be empty (warning) ────────────────
+            description = str(row.get("Description", "")).strip()
+            if not description:
+                warnings.append(ValidationError(
                     row=row_num,
-                    column="Cost Item Name",
+                    column="Description",
                     value="(empty)",
-                    message="Cost Item Name cannot be empty.",
+                    message="Description is empty. Consider adding a detailed description for clarity.",
+                    severity="warning",
                 ))
 
         # ── Step 3: Build summary ─────────────────────────────────────────────
@@ -416,6 +580,8 @@ class GCHIValidator:
             "total_errors": len(errors),
             "total_warnings": len(warnings),
             "errors_by_column": error_cols,
+            "column_mappings": mappings,
+            "has_unit_price": has_unit_price,
         }
 
         return ValidationResult(
