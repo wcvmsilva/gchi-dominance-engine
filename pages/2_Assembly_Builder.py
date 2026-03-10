@@ -554,11 +554,23 @@ def main():
                     )
                     st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
-                # ── Export CSV ───────────────────────────────────────────────
-                st.markdown('<div class="section-header">Export</div>', unsafe_allow_html=True)
+                # ── Export CSV (v8.4.1 JobTread Format) ──────────────────────
+                st.markdown('<div class="section-header">Export to JobTread</div>', unsafe_allow_html=True)
+
+                # Taxable rules per Cost Type (GCHI v8.4.1)
+                TAXABLE_RULES = {
+                    "Labor": "false",
+                    "Materials": "true",
+                    "Subcontractor": "true",
+                    "Equipment / Rental": "false",
+                    "Permits / Fees": "false",
+                    "Allowance": "true",
+                    "Other": "false",
+                }
 
                 # Build JobTread-ready CSV from assembly
                 jt_rows = []
+                export_issues = []
                 for line in calc["lines"]:
                     # Find parent cost group for this cost code
                     cc = by_code.get(line["cost_code"])
@@ -568,26 +580,88 @@ def main():
                     else:
                         cost_group = cc.get("name", "Uncategorized") if cc else "Uncategorized"
 
+                    # Determine taxable based on Cost Type rules
+                    cost_type_val = line["cost_type"]
+                    taxable_val = TAXABLE_RULES.get(cost_type_val, "false")
+
+                    # Round numeric fields to 2 decimal places
+                    qty_rounded = round(float(line["calculated_qty"]), 2)
+                    unit_cost_rounded = round(float(line["unit_cost"]), 2)
+
+                    # Validate: check for empty or invalid values
+                    if cost_group == "Uncategorized":
+                        export_issues.append(f"Line '{line['name']}': Cost Group is 'Uncategorized' — verify parent cost code.")
+                    if not line.get("unit_name"):
+                        export_issues.append(f"Line '{line['name']}': Unit is empty.")
+                    if qty_rounded <= 0:
+                        export_issues.append(f"Line '{line['name']}': Quantity is {qty_rounded} (must be > 0).")
+                    if unit_cost_rounded <= 0:
+                        export_issues.append(f"Line '{line['name']}': Unit Cost is ${unit_cost_rounded} (must be > 0).")
+
                     jt_rows.append({
                         "Cost Group": cost_group,
                         "Cost Item": line["name"],
-                        "Description": f"{asm['name']} - {line['name']}",
-                        "Quantity": line["calculated_qty"],
+                        "Description": f"{asm['name']} — {line['name']}",
+                        "Quantity": qty_rounded,
                         "Unit": line["unit_name"],
-                        "Unit Cost": line["unit_cost"],
-                        "Cost Type": line["cost_type"],
-                        "Taxable": "true" if line["cost_type"] == "Materials" else "false",
+                        "Unit Cost": unit_cost_rounded,
+                        "Cost Type": cost_type_val,
+                        "Taxable": taxable_val,
                     })
 
                 jt_df = pd.DataFrame(jt_rows)
+
+                # Show preview table
+                st.markdown("**CSV Preview (JobTread v8.4.1 Format):**")
+                st.dataframe(jt_df, use_container_width=True, hide_index=True)
+
+                # Show validation status
+                if export_issues:
+                    st.warning(f"**{len(export_issues)} issue(s) detected:**")
+                    for issue in export_issues:
+                        st.markdown(f"- {issue}")
+                else:
+                    st.success("All lines pass v8.4.1 pre-export validation.")
+
+                # Format CSV with proper encoding
                 csv_bytes = jt_df.to_csv(index=False).encode("utf-8")
 
-                st.download_button(
-                    label="Download JobTread CSV",
-                    data=csv_bytes,
-                    file_name=f"GCHI_{asm['name'].replace(' ', '_')}_JobTread.csv",
-                    mime="text/csv",
+                # Show file stats
+                st.markdown(
+                    f'<div style="font-size:0.8rem; color:#A0A4B8; margin: 0.5rem 0;">'
+                    f'Rows: {len(jt_rows)} | Columns: {len(jt_df.columns)} | '
+                    f'Format: Cost Group, Cost Item, Description, Quantity, Unit, Unit Cost, Cost Type, Taxable'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
+
+                col_dl1, col_dl2 = st.columns(2)
+                with col_dl1:
+                    st.download_button(
+                        label="Download JobTread CSV",
+                        data=csv_bytes,
+                        file_name=f"GCHI_{asm['name'].replace(' ', '_')}_JobTread.csv",
+                        mime="text/csv",
+                        type="primary",
+                    )
+                with col_dl2:
+                    # Also offer the raw data as a summary
+                    summary_text = (
+                        f"Assembly: {asm['name']}\n"
+                        f"Region: {asm.get('region', 'N/A')}\n"
+                        f"Base Qty: {asm.get('base_unit_qty', 'N/A')} sq ft\n"
+                        f"Waste Factor: {asm.get('waste_factor', 'N/A')}\n"
+                        f"Direct Cost: {money(calc['direct_cost'])}\n"
+                        f"Lines: {len(jt_rows)}\n"
+                        f"Generated: {date.today().isoformat()}\n"
+                    )
+                    st.download_button(
+                        label="Download Cost Summary",
+                        data=summary_text.encode("utf-8"),
+                        file_name=f"GCHI_{asm['name'].replace(' ', '_')}_Summary.txt",
+                        mime="text/plain",
+                    )
+
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 2: EDIT BOM
