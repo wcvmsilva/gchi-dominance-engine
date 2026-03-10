@@ -554,57 +554,74 @@ def main():
                     )
                     st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
 
-                # ── Export CSV (v8.4.1 JobTread Format) ──────────────────────
+                # ── Export CSV (v8.4.2 JobTread Format) ──────────────────────
                 st.markdown('<div class="section-header">Export to JobTread</div>', unsafe_allow_html=True)
 
-                # Taxable rules per Cost Type (GCHI v8.4.1)
-                TAXABLE_RULES = {
-                    "Labor": "false",
-                    "Materials": "true",
-                    "Subcontractor": "true",
-                    "Equipment / Rental": "false",
-                    "Permits / Fees": "false",
-                    "Allowance": "true",
-                    "Other": "false",
-                }
+                # Build Cost Type margin lookup from Supabase data
+                ct_margin_map = {}
+                ct_taxable_map = {}
+                for ct in cost_types:
+                    ct_margin_map[ct["name"]] = float(ct.get("default_margin", 0) or 0)
+                    ct_taxable_map[ct["name"]] = "true" if ct.get("is_taxable") else "false"
 
                 # Build JobTread-ready CSV from assembly
                 jt_rows = []
                 export_issues = []
                 for line in calc["lines"]:
-                    # Find parent cost group for this cost code
+                    # Find the cost code record
                     cc = by_code.get(line["cost_code"])
+
+                    # Cost Code number (4-digit, e.g. "2401")
+                    cost_code_number = line["cost_code"] if line["cost_code"] != "????" else ""
+
+                    # Cost Group Name = parent name
                     if cc and cc.get("parent_id"):
                         parent = by_id.get(cc["parent_id"], {})
-                        cost_group = parent.get("name", "Uncategorized")
+                        cost_group_name = parent.get("name", "Uncategorized")
                     else:
-                        cost_group = cc.get("name", "Uncategorized") if cc else "Uncategorized"
+                        cost_group_name = cc.get("name", "Uncategorized") if cc else "Uncategorized"
 
-                    # Determine taxable based on Cost Type rules
+                    # Cost Item Name = child cost code name
+                    cost_item_name = line["name"]
+
+                    # Cost Type and Taxable from Supabase cost_types table
                     cost_type_val = line["cost_type"]
-                    taxable_val = TAXABLE_RULES.get(cost_type_val, "false")
+                    taxable_val = ct_taxable_map.get(cost_type_val, "false")
 
                     # Round numeric fields to 2 decimal places
                     qty_rounded = round(float(line["calculated_qty"]), 2)
                     unit_cost_rounded = round(float(line["unit_cost"]), 2)
 
+                    # Calculate Unit Price using margin from Cost Type
+                    # Formula: Unit Price = Unit Cost / (1 - margin)
+                    margin = ct_margin_map.get(cost_type_val, 0)
+                    if margin < 1:
+                        unit_price = round(unit_cost_rounded / (1 - margin), 2) if margin > 0 else unit_cost_rounded
+                    else:
+                        unit_price = unit_cost_rounded
+
                     # Validate: check for empty or invalid values
-                    if cost_group == "Uncategorized":
-                        export_issues.append(f"Line '{line['name']}': Cost Group is 'Uncategorized' — verify parent cost code.")
+                    if cost_group_name == "Uncategorized":
+                        export_issues.append(f"Line '{cost_item_name}': Cost Group is 'Uncategorized' — verify parent cost code.")
+                    if not cost_code_number:
+                        export_issues.append(f"Line '{cost_item_name}': Cost Code number is missing.")
                     if not line.get("unit_name"):
-                        export_issues.append(f"Line '{line['name']}': Unit is empty.")
+                        export_issues.append(f"Line '{cost_item_name}': Unit is empty.")
                     if qty_rounded <= 0:
-                        export_issues.append(f"Line '{line['name']}': Quantity is {qty_rounded} (must be > 0).")
+                        export_issues.append(f"Line '{cost_item_name}': Quantity is {qty_rounded} (must be > 0).")
                     if unit_cost_rounded <= 0:
-                        export_issues.append(f"Line '{line['name']}': Unit Cost is ${unit_cost_rounded} (must be > 0).")
+                        export_issues.append(f"Line '{cost_item_name}': Unit Cost is ${unit_cost_rounded} (must be > 0).")
 
                     jt_rows.append({
-                        "Cost Group": cost_group,
-                        "Cost Item": line["name"],
-                        "Description": f"{asm['name']} — {line['name']}",
+                        "Cost Group Name": cost_group_name,
+                        "Cost Item Name": cost_item_name,
+                        "Description": f"{asm['name']} — {cost_item_name}",
+                        "Cost Code": cost_code_number,
                         "Quantity": qty_rounded,
                         "Unit": line["unit_name"],
                         "Unit Cost": unit_cost_rounded,
+                        "Unit Price": unit_price,
+                        "Margin": f"{margin:.0%}" if margin > 0 else "0%",
                         "Cost Type": cost_type_val,
                         "Taxable": taxable_val,
                     })
@@ -612,7 +629,7 @@ def main():
                 jt_df = pd.DataFrame(jt_rows)
 
                 # Show preview table
-                st.markdown("**CSV Preview (JobTread v8.4.1 Format):**")
+                st.markdown("**CSV Preview (JobTread v8.4.2 Format):**")
                 st.dataframe(jt_df, use_container_width=True, hide_index=True)
 
                 # Show validation status
@@ -621,7 +638,7 @@ def main():
                     for issue in export_issues:
                         st.markdown(f"- {issue}")
                 else:
-                    st.success("All lines pass v8.4.1 pre-export validation.")
+                    st.success("All lines pass v8.4.2 pre-export validation.")
 
                 # Format CSV with proper encoding
                 csv_bytes = jt_df.to_csv(index=False).encode("utf-8")
@@ -630,7 +647,7 @@ def main():
                 st.markdown(
                     f'<div style="font-size:0.8rem; color:#A0A4B8; margin: 0.5rem 0;">'
                     f'Rows: {len(jt_rows)} | Columns: {len(jt_df.columns)} | '
-                    f'Format: Cost Group, Cost Item, Description, Quantity, Unit, Unit Cost, Cost Type, Taxable'
+                    f'Format: Cost Group Name, Cost Item Name, Description, Cost Code, Quantity, Unit, Unit Cost, Unit Price, Margin, Cost Type, Taxable'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
