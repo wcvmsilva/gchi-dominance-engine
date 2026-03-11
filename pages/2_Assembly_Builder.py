@@ -97,7 +97,65 @@ st.markdown("""
     .cost-breakdown .line.total { border-top: 1px solid var(--card-border); font-weight: 700; margin-top: 0.5rem; padding-top: 0.5rem; }
     .bom-row { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem; margin: 0.5rem 0; }
     .locked-field { background: rgba(184, 134, 11, 0.1); border: 1px solid var(--gold-dark); border-radius: 6px; padding: 0.5rem 0.8rem; }
-    #MainMenu { visibility: hidden; } footer { visibility: hidden; } header { visibility: hidden; }
+    #MainMenu { visibility: hidden; } footer { visibility: hidden; }
+
+    /* Sidebar toggle buttons — gold GCHI brand */
+    /* Expand button (IS the button element itself) */
+    button[data-testid="stExpandSidebarButton"] {
+        position: fixed !important;
+        top: 0.8rem !important;
+        left: 0.8rem !important;
+        z-index: 999999 !important;
+        background: linear-gradient(135deg, var(--gold-dark), var(--gold-light)) !important;
+        border-radius: 10px !important;
+        border: 2px solid var(--gold-light) !important;
+        box-shadow: 0 2px 12px rgba(184, 134, 11, 0.6) !important;
+        width: 2.8rem !important;
+        height: 2.8rem !important;
+        min-width: 2.8rem !important;
+        min-height: 2.8rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease !important;
+        padding: 0 !important;
+    }
+    button[data-testid="stExpandSidebarButton"] span {
+        color: #0F1117 !important;
+        font-size: 1.4rem !important;
+        font-weight: 900 !important;
+    }
+    button[data-testid="stExpandSidebarButton"]:hover {
+        transform: scale(1.15) !important;
+        box-shadow: 0 4px 20px rgba(184, 134, 11, 0.8) !important;
+    }
+    /* Collapse button (has a button child inside) */
+    [data-testid="stSidebarCollapseButton"] button {
+        background: linear-gradient(135deg, var(--gold-dark), var(--gold-light)) !important;
+        border-radius: 10px !important;
+        border: 2px solid var(--gold-light) !important;
+        box-shadow: 0 2px 12px rgba(184, 134, 11, 0.6) !important;
+        width: 2.8rem !important;
+        height: 2.8rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button span {
+        color: #0F1117 !important;
+        font-size: 1.4rem !important;
+        font-weight: 900 !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button:hover {
+        transform: scale(1.15) !important;
+        box-shadow: 0 4px 20px rgba(184, 134, 11, 0.8) !important;
+    }
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 

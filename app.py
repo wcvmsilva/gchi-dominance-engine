@@ -217,10 +217,69 @@ st.markdown("""
         color: var(--text-primary) !important;
     }
 
-    /* ── Hide Streamlit branding ── */
+    /* ── Hide Streamlit branding (keep header for sidebar toggle) ── */
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
-    header { visibility: hidden; }
+
+    /* ── Sidebar toggle buttons — gold GCHI brand ── */
+    /* Expand button (IS the button element itself) */
+    button[data-testid="stExpandSidebarButton"] {
+        position: fixed !important;
+        top: 0.8rem !important;
+        left: 0.8rem !important;
+        z-index: 999999 !important;
+        background: linear-gradient(135deg, #B8860B, #DAA520) !important;
+        border-radius: 10px !important;
+        border: 2px solid #DAA520 !important;
+        box-shadow: 0 2px 12px rgba(184, 134, 11, 0.6) !important;
+        width: 2.8rem !important;
+        height: 2.8rem !important;
+        min-width: 2.8rem !important;
+        min-height: 2.8rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease !important;
+        padding: 0 !important;
+    }
+    button[data-testid="stExpandSidebarButton"] span {
+        color: #0F1117 !important;
+        font-size: 1.4rem !important;
+        font-weight: 900 !important;
+    }
+    button[data-testid="stExpandSidebarButton"]:hover {
+        transform: scale(1.15) !important;
+        box-shadow: 0 4px 20px rgba(184, 134, 11, 0.8) !important;
+    }
+    /* Collapse button (has a button child inside) */
+    [data-testid="stSidebarCollapseButton"] button {
+        background: linear-gradient(135deg, #B8860B, #DAA520) !important;
+        border-radius: 10px !important;
+        border: 2px solid #DAA520 !important;
+        box-shadow: 0 2px 12px rgba(184, 134, 11, 0.6) !important;
+        width: 2.8rem !important;
+        height: 2.8rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button span {
+        color: #0F1117 !important;
+        font-size: 1.4rem !important;
+        font-weight: 900 !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button:hover {
+        transform: scale(1.15) !important;
+        box-shadow: 0 4px 20px rgba(184, 134, 11, 0.8) !important;
+    }
+
+    /* ── Streamlit header bar — minimal ── */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
