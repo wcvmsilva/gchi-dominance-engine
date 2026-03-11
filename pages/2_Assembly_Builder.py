@@ -26,7 +26,9 @@ from db import (
     fetch_units,
     upsert_assembly,
     upsert_assembly_item,
+    delete_assembly,
     delete_assembly_item,
+    upsert_crew_velocity,
     upsert_pricing,
 )
 
@@ -215,7 +217,7 @@ def render_sidebar():
             st.markdown("## GCHI")
 
         st.markdown("---")
-        st.markdown('<div class="section-header">Assembly Builder v1.0</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Assembly Builder v1.1</div>', unsafe_allow_html=True)
         st.markdown("""
         **Phase 1.2** — Build and validate assemblies with:
         - BOM linked to 4-digit Cost Codes
@@ -238,7 +240,7 @@ def render_sidebar():
         st.markdown("---")
         st.markdown(
             '<p style="font-size:0.7rem; color:#555; text-align:center;">'
-            'GCHI Dominance Engine v8.4.1<br>Assembly Builder v1.0<br>'
+            'GCHI Dominance Engine v8.4.2<br>Assembly Builder v1.1 (CRUD)<br>'
             '&copy; 2026 GC Home Improvement LLC</p>',
             unsafe_allow_html=True,
         )
@@ -690,6 +692,78 @@ def main():
             asm = selected_assembly
             items = fetch_assembly_items(asm["id"])
 
+            # ── Edit Assembly Header ────────────────────────────────────────
+            st.markdown(f'<div class="section-header">Edit Assembly: {asm["name"]}</div>', unsafe_allow_html=True)
+
+            hcol1, hcol2 = st.columns(2)
+            with hcol1:
+                edit_name = st.text_input("Assembly Name", value=asm.get("name", ""), key="edit_name")
+                edit_category = st.selectbox(
+                    "Category",
+                    options=[
+                        "decking", "roofing", "fencing", "siding", "flooring",
+                        "painting", "plumbing", "electrical", "foundation",
+                        "framing", "drywall", "tiling", "cabinetry", "general",
+                    ],
+                    index=[
+                        "decking", "roofing", "fencing", "siding", "flooring",
+                        "painting", "plumbing", "electrical", "foundation",
+                        "framing", "drywall", "tiling", "cabinetry", "general",
+                    ].index(asm.get("category", "general")) if asm.get("category", "general") in [
+                        "decking", "roofing", "fencing", "siding", "flooring",
+                        "painting", "plumbing", "electrical", "foundation",
+                        "framing", "drywall", "tiling", "cabinetry", "general",
+                    ] else 13,
+                    key="edit_category",
+                )
+            with hcol2:
+                edit_base_qty = st.number_input("Base Unit Qty (sq ft)", value=float(asm.get("base_unit_qty", 100)), min_value=1.0, step=1.0, key="edit_base_qty")
+                edit_waste = st.number_input("Global Waste Factor", value=float(asm.get("waste_factor", 0.10)), min_value=0.0, max_value=0.5, step=0.01, key="edit_waste")
+                edit_region = st.selectbox(
+                    "Region",
+                    options=["charleston_sc", "columbia_sc"],
+                    index=["charleston_sc", "columbia_sc"].index(asm.get("region", "charleston_sc")) if asm.get("region", "charleston_sc") in ["charleston_sc", "columbia_sc"] else 0,
+                    key="edit_region",
+                )
+
+            edit_description = st.text_area("Description", value=asm.get("description", "") or "", key="edit_desc")
+
+            hbtn1, hbtn2, hbtn3 = st.columns([2, 2, 1])
+            with hbtn1:
+                if st.button("Save Assembly Changes", type="primary", key="save_header"):
+                    upsert_assembly({
+                        "id": asm["id"],
+                        "name": edit_name,
+                        "category": edit_category,
+                        "base_unit_qty": edit_base_qty,
+                        "waste_factor": edit_waste,
+                        "region": edit_region,
+                        "description": edit_description,
+                    })
+                    st.success("Assembly header updated!")
+                    st.rerun()
+            with hbtn3:
+                if st.button("Delete Assembly", type="secondary", key="delete_asm"):
+                    st.session_state["confirm_delete"] = asm["id"]
+
+            # Confirm delete dialog
+            if st.session_state.get("confirm_delete") == asm["id"]:
+                st.warning(f"Are you sure you want to delete '{asm['name']}' and ALL its line items? This cannot be undone.")
+                dcol1, dcol2 = st.columns(2)
+                with dcol1:
+                    if st.button("YES, DELETE", key="confirm_del_yes"):
+                        delete_assembly(asm["id"])
+                        st.session_state.pop("confirm_delete", None)
+                        st.success("Assembly deleted.")
+                        st.rerun()
+                with dcol2:
+                    if st.button("Cancel", key="confirm_del_no"):
+                        st.session_state.pop("confirm_delete", None)
+                        st.rerun()
+
+            st.markdown("---")
+
+            # ── BOM Line Items ──────────────────────────────────────────────
             st.markdown(f'<div class="section-header">Edit BOM: {asm["name"]}</div>', unsafe_allow_html=True)
 
             # Build options for dropdowns
@@ -842,15 +916,63 @@ def main():
                 "decking", "roofing", "fencing", "siding", "flooring",
                 "painting", "plumbing", "electrical", "foundation",
                 "framing", "drywall", "tiling", "cabinetry", "general",
-            ])
+            ], key="new_category")
         with ncol2:
-            new_base_qty = st.number_input("Base Unit Qty (sq ft)", value=100.0, min_value=1.0, step=1.0)
-            new_waste = st.number_input("Global Waste Factor", value=0.10, min_value=0.0, max_value=0.5, step=0.01)
-            new_region = st.selectbox("Region", options=["charleston_sc", "columbia_sc"])
+            new_base_qty = st.number_input("Base Unit Qty (sq ft)", value=100.0, min_value=1.0, step=1.0, key="new_base_qty")
+            new_waste = st.number_input("Global Waste Factor", value=0.10, min_value=0.0, max_value=0.5, step=0.01, key="new_waste_factor")
+            new_region = st.selectbox("Region", options=["charleston_sc", "columbia_sc"], key="new_region")
 
-        new_description = st.text_area("Description", placeholder="Describe the assembly scope...")
+        new_description = st.text_area("Description", placeholder="Describe the assembly scope...", key="new_desc")
 
-        if st.button("Create Assembly", type="primary"):
+        # ── Crew Velocity Setup ─────────────────────────────────────────
+        st.markdown('<div class="section-header">Crew Velocity (Optional)</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<p style="font-size:0.82rem; color:#A0A4B8;">'
+            'Set the expected crew productivity for this assembly type. '
+            'This determines total labor hours and work days.</p>',
+            unsafe_allow_html=True,
+        )
+
+        cv_enabled = st.checkbox("Set Crew Velocity for this assembly", value=False, key="cv_enabled")
+
+        if cv_enabled:
+            cvcol1, cvcol2, cvcol3 = st.columns(3)
+            with cvcol1:
+                cv_crew_size = st.number_input("Crew Size (people)", value=2, min_value=1, max_value=20, step=1, key="cv_crew")
+            with cvcol2:
+                cv_output_hr = st.number_input("Output per Hour (sq ft/hr)", value=1.50, min_value=0.01, step=0.1, key="cv_output")
+            with cvcol3:
+                cv_season = st.selectbox("Season", options=["spring_fall", "summer", "winter"], key="cv_season")
+
+            # Preview calculation
+            if new_base_qty > 0 and cv_output_hr > 0:
+                preview_hours = new_base_qty / cv_output_hr
+                preview_days = preview_hours / (cv_crew_size * 8)
+                st.markdown(
+                    f'<div style="background: rgba(184,134,11,0.08); border: 1px solid rgba(184,134,11,0.3); '
+                    f'border-radius: 8px; padding: 0.8rem; margin: 0.5rem 0;">'
+                    f'<strong>Preview:</strong> {preview_hours:.0f} total hours | '
+                    f'{preview_days:.1f} work days for {new_base_qty:.0f} sq ft</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Select the labor cost code for crew velocity
+            labor_codes = sorted(
+                [(c["code"], f'{c["code"]} - {c["name"]}', c["id"]) for c in cost_codes
+                 if not c.get("is_parent") and "labor" in c.get("name", "").lower()],
+                key=lambda x: x[0],
+            )
+            if labor_codes:
+                cv_cc_labels = [f'{lc[0]} - {lc[1].split(" - ", 1)[1]}' for lc in labor_codes]
+                cv_cc_idx = st.selectbox("Labor Cost Code for Crew Velocity", options=range(len(cv_cc_labels)), format_func=lambda i: cv_cc_labels[i], key="cv_cc")
+                cv_selected_cc = labor_codes[cv_cc_idx]
+            else:
+                cv_selected_cc = None
+                st.info("No labor cost codes found. You can set crew velocity later.")
+
+        st.markdown("---")
+
+        if st.button("Create Assembly", type="primary", key="create_asm_btn"):
             if not new_name:
                 st.error("Assembly name is required.")
             else:
@@ -864,6 +986,18 @@ def main():
                     "region": new_region,
                     "description": new_description,
                 })
+
+                # Create crew velocity record if enabled
+                if cv_enabled and cv_selected_cc:
+                    upsert_crew_velocity({
+                        "id": str(uuid.uuid4()),
+                        "cost_code_id": cv_selected_cc[2],
+                        "crew_size": cv_crew_size,
+                        "output_per_hour": cv_output_hr,
+                        "season": cv_season,
+                        "is_active": True,
+                    })
+
                 st.success(f"Assembly '{new_name}' created! Switch to 'Edit BOM' tab to add line items.")
                 st.rerun()
 

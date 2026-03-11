@@ -156,6 +156,23 @@ def delete_assembly_item(item_id: str):
     return resp.data
 
 
+def delete_assembly(assembly_id: str):
+    """Delete an assembly and all its line items."""
+    sb = get_supabase()
+    # Delete line items first (foreign key)
+    sb.table("assembly_items").delete().eq("assembly_id", assembly_id).execute()
+    # Delete the assembly itself
+    resp = sb.table("assemblies").delete().eq("id", assembly_id).execute()
+    return resp.data
+
+
+def upsert_crew_velocity(data: dict):
+    """Create or update a crew velocity record."""
+    sb = get_supabase()
+    resp = sb.table("crew_velocity").upsert(data).execute()
+    return resp.data
+
+
 def upsert_pricing(data: dict):
     """Create or update a pricing history record."""
     sb = get_supabase()
