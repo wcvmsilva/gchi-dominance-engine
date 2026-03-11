@@ -34,7 +34,6 @@ def _get_secret(key: str, default: str = "") -> str:
     try:
         supabase_section = st.secrets.get("supabase", {})
         if isinstance(supabase_section, dict):
-            # Map SUPABASE_KEY -> key, SUPABASE_URL -> url
             short_key = key.replace("SUPABASE_", "").lower()
             val = supabase_section.get(short_key, "")
             if val:
@@ -53,15 +52,29 @@ def _get_secret(key: str, default: str = "") -> str:
     return default
 
 
-SUPABASE_URL = _get_secret("SUPABASE_URL", _DEFAULT_URL)
-SUPABASE_KEY = _get_secret("SUPABASE_KEY", "")
+def _get_url():
+    return _get_secret("SUPABASE_URL", _DEFAULT_URL)
+
+
+def _get_key():
+    return _get_secret("SUPABASE_KEY", "")
 
 
 @st.cache_resource(show_spinner=False)
 def get_supabase():
     """Return a cached Supabase client."""
-    from supabase import create_client
-    if not SUPABASE_KEY:
+    try:
+        from supabase import create_client
+    except ImportError:
+        st.error(
+            "The `supabase` package is not installed. "
+            "Please add `supabase` to your requirements.txt."
+        )
+        st.stop()
+        return None
+
+    key = _get_key()
+    if not key:
         st.error(
             "SUPABASE_KEY not configured. "
             "Set it in Streamlit Cloud > App Settings > Secrets using this format:\n\n"
@@ -71,8 +84,14 @@ def get_supabase():
             "```"
         )
         st.stop()
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+        return None
 
+    return create_client(_get_url(), key)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Read functions
+# ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_cost_codes():
     """Fetch all cost codes with parent info, cached per session."""
@@ -135,6 +154,10 @@ def fetch_pricing_history(cost_code_id: str = None):
     return resp.data or []
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Write functions
+# ─────────────────────────────────────────────────────────────────────────────
+
 def upsert_assembly(data: dict):
     """Create or update an assembly."""
     sb = get_supabase()
@@ -148,6 +171,24 @@ def upsert_assembly_item(data: dict):
     resp = sb.table("assembly_items").upsert(data).execute()
     return resp.data
 
+
+def upsert_crew_velocity(data: dict):
+    """Create or update a crew velocity record."""
+    sb = get_supabase()
+    resp = sb.table("crew_velocity").upsert(data).execute()
+    return resp.data
+
+
+def upsert_pricing(data: dict):
+    """Create or update a pricing history record."""
+    sb = get_supabase()
+    resp = sb.table("cost_code_pricing_history").upsert(data).execute()
+    return resp.data
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Delete functions
+# ─────────────────────────────────────────────────────────────────────────────
 
 def delete_assembly_item(item_id: str):
     """Delete an assembly line item."""
@@ -163,18 +204,4 @@ def delete_assembly(assembly_id: str):
     sb.table("assembly_items").delete().eq("assembly_id", assembly_id).execute()
     # Delete the assembly itself
     resp = sb.table("assemblies").delete().eq("id", assembly_id).execute()
-    return resp.data
-
-
-def upsert_crew_velocity(data: dict):
-    """Create or update a crew velocity record."""
-    sb = get_supabase()
-    resp = sb.table("crew_velocity").upsert(data).execute()
-    return resp.data
-
-
-def upsert_pricing(data: dict):
-    """Create or update a pricing history record."""
-    sb = get_supabase()
-    resp = sb.table("cost_code_pricing_history").upsert(data).execute()
     return resp.data
